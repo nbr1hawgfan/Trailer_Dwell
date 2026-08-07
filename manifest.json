@@ -1,0 +1,9 @@
+{
+  "name": "Pernod Ricard Trailer Dwell",
+  "short_name": "Pernod Dwell",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#121212",
+  "theme_color": "#121212",
+  "icons": []
+}
