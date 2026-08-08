@@ -218,6 +218,12 @@
 
   .refresh-btn:active { transform: scale(0.97); }
 
+  .export-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 10px;
+  }
+
   .theme-toggle {
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -280,10 +286,16 @@
 </div>
 
 <div class="section" id="onsiteSection">
+  <div class="export-row">
+    <button class="refresh-btn" id="exportOnSiteBtn">Export CSV</button>
+  </div>
   <div id="onsiteTableWrap"></div>
 </div>
 
 <div class="section hidden" id="departedSection">
+  <div class="export-row">
+    <button class="refresh-btn" id="exportDwellLogBtn">Export Full Dwell Log CSV</button>
+  </div>
   <div id="departedTableWrap"></div>
 </div>
 
@@ -450,6 +462,8 @@ function renderStats(trailers) {
 }
 
 let sortState = { key: 'Hours On Site', dir: 'desc' };
+let lastTrailers = [];
+let lastDwellLog = [];
 
 function renderOnSiteTable(trailers) {
   const wrap = document.getElementById('onsiteTableWrap');
@@ -533,6 +547,61 @@ function clearError() {
   document.getElementById('errorBanner').classList.add('hidden');
 }
 
+// ---- CSV export (client-side, no backend involved) ----
+function csvEscape(val) {
+  const s = (val === null || val === undefined) ? '' : String(val);
+  if (/[",\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function downloadCSV(filename, headers, rows) {
+  const lines = [headers.map(csvEscape).join(',')];
+  rows.forEach(row => {
+    lines.push(headers.map(h => csvEscape(row[h])).join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function todayStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+document.getElementById('exportOnSiteBtn').addEventListener('click', () => {
+  if (!lastTrailers.length) return;
+
+  const sorted = [...lastTrailers].sort((a, b) => {
+    let av = a[sortState.key], bv = b[sortState.key];
+    if (sortState.key === 'Hours On Site') { av = parseFloat(av) || 0; bv = parseFloat(bv) || 0; }
+    if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
+    if (av > bv) return sortState.dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  downloadCSV(
+    'pernod-on-site-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Arrival Time', 'Hours On Site', 'Latitude', 'Longitude', 'Last Seen'],
+    sorted
+  );
+});
+
+document.getElementById('exportDwellLogBtn').addEventListener('click', () => {
+  if (!lastDwellLog.length) return;
+
+  downloadCSV(
+    'pernod-dwell-log-full-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Event Type', 'Event Time', 'Duration (hrs)', 'Latitude', 'Longitude', 'Notes'],
+    lastDwellLog
+  );
+});
+
 async function loadData() {
   document.getElementById('lastUpdated').textContent = 'Refreshing...';
 
@@ -543,6 +612,8 @@ async function loadData() {
     ]);
 
     clearError();
+    lastTrailers = trailers;
+    lastDwellLog = dwellLog;
     renderStats(trailers);
     updateMap(trailers);
     renderOnSiteTable(trailers);
