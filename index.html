@@ -221,7 +221,62 @@
   .export-row {
     display: flex;
     justify-content: flex-end;
+    gap: 8px;
     margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+
+  .filter-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    padding: 12px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+  }
+
+  .filter-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    flex: 1;
+    min-width: 160px;
+  }
+
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .filter-field label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+
+  .filter-input-small {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 7px 8px;
+    border-radius: 8px;
+    font-size: 13px;
+    width: 130px;
+  }
+
+  .filter-count {
+    color: var(--text-dim);
+    font-size: 12px;
+    margin: -4px 0 10px 2px;
   }
 
   .theme-toggle {
@@ -286,6 +341,15 @@
 </div>
 
 <div class="section" id="onsiteSection">
+  <div class="filter-row">
+    <input type="text" id="onsiteSearch" class="filter-input" placeholder="Search trailer name or ID...">
+    <div class="filter-field">
+      <label for="onsiteMinHours">Min hours on site</label>
+      <input type="number" id="onsiteMinHours" class="filter-input-small" min="0" step="1" placeholder="0">
+    </div>
+    <button class="refresh-btn" id="onsiteClearFilters">Clear</button>
+  </div>
+  <div class="filter-count" id="onsiteFilterCount"></div>
   <div class="export-row">
     <button class="refresh-btn" id="exportOnSiteBtn">Export CSV</button>
   </div>
@@ -293,8 +357,26 @@
 </div>
 
 <div class="section hidden" id="departedSection">
+  <div class="filter-row">
+    <input type="text" id="departedSearch" class="filter-input" placeholder="Search trailer name or ID...">
+    <div class="filter-field">
+      <label for="departedStart">From</label>
+      <input type="date" id="departedStart" class="filter-input-small">
+    </div>
+    <div class="filter-field">
+      <label for="departedEnd">To</label>
+      <input type="date" id="departedEnd" class="filter-input-small">
+    </div>
+    <div class="filter-field">
+      <label for="departedMinHours">Min dwell (hrs)</label>
+      <input type="number" id="departedMinHours" class="filter-input-small" min="0" step="1" placeholder="0">
+    </div>
+    <button class="refresh-btn" id="departedClearFilters">Clear</button>
+  </div>
+  <div class="filter-count" id="departedFilterCount"></div>
   <div class="export-row">
-    <button class="refresh-btn" id="exportDwellLogBtn">Export Full Dwell Log CSV</button>
+    <button class="refresh-btn" id="exportDwellLogBtn">Export Filtered CSV</button>
+    <button class="refresh-btn" id="exportDwellLogFullBtn">Export Full History CSV</button>
   </div>
   <div id="departedTableWrap"></div>
 </div>
@@ -464,16 +546,41 @@ function renderStats(trailers) {
 let sortState = { key: 'Hours On Site', dir: 'desc' };
 let lastTrailers = [];
 let lastDwellLog = [];
+let lastFilteredOnSite = [];
+let lastFilteredDeparted = [];
+
+function applyOnSiteFilters(trailers) {
+  const search = (document.getElementById('onsiteSearch').value || '').trim().toLowerCase();
+  const minHours = parseFloat(document.getElementById('onsiteMinHours').value);
+
+  return trailers.filter(t => {
+    if (search) {
+      const haystack = ((t['Trailer Name'] || '') + ' ' + (t['Trailer ID'] || '')).toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    if (!isNaN(minHours) && minHours > 0) {
+      const h = parseFloat(t['Hours On Site']) || 0;
+      if (h < minHours) return false;
+    }
+    return true;
+  });
+}
 
 function renderOnSiteTable(trailers) {
   const wrap = document.getElementById('onsiteTableWrap');
+  const filtered = applyOnSiteFilters(trailers);
+  lastFilteredOnSite = filtered;
 
-  if (!trailers.length) {
-    wrap.innerHTML = '<div class="empty-state">No trailers currently on site.</div>';
+  updateFilterCount('onsiteFilterCount', filtered.length, trailers.length);
+
+  if (!filtered.length) {
+    wrap.innerHTML = '<div class="empty-state">' +
+      (trailers.length ? 'No trailers match the current filters.' : 'No trailers currently on site.') +
+      '</div>';
     return;
   }
 
-  const sorted = [...trailers].sort((a, b) => {
+  const sorted = [...filtered].sort((a, b) => {
     let av = a[sortState.key], bv = b[sortState.key];
     if (sortState.key === 'Hours On Site') { av = parseFloat(av) || 0; bv = parseFloat(bv) || 0; }
     if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
@@ -508,16 +615,48 @@ function renderOnSiteTable(trailers) {
   });
 }
 
+function applyDepartedFilters(dwellLog) {
+  const search = (document.getElementById('departedSearch').value || '').trim().toLowerCase();
+  const startVal = document.getElementById('departedStart').value;
+  const endVal = document.getElementById('departedEnd').value;
+  const minHours = parseFloat(document.getElementById('departedMinHours').value);
+
+  const start = startVal ? new Date(startVal + 'T00:00:00') : null;
+  const end = endVal ? new Date(endVal + 'T23:59:59') : null;
+
+  return dwellLog.filter(r => {
+    if (r['Event Type'] !== 'Departure') return false;
+
+    const eventTime = new Date(r['Event Time']);
+    if (start && eventTime < start) return false;
+    if (end && eventTime > end) return false;
+
+    if (search) {
+      const haystack = ((r['Trailer Name'] || '') + ' ' + (r['Trailer ID'] || '')).toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+
+    if (!isNaN(minHours) && minHours > 0) {
+      const h = parseFloat(r['Duration (hrs)']) || 0;
+      if (h < minHours) return false;
+    }
+
+    return true;
+  }).sort((a, b) => new Date(b['Event Time']) - new Date(a['Event Time']));
+}
+
 function renderDepartedTable(dwellLog) {
   const wrap = document.getElementById('departedTableWrap');
+  const departures = applyDepartedFilters(dwellLog);
+  lastFilteredDeparted = departures;
 
-  const cutoff = new Date(Date.now() - 7 * 24 * 3600000); // last 7 days
-  const departures = dwellLog
-    .filter(r => r['Event Type'] === 'Departure' && new Date(r['Event Time']) >= cutoff)
-    .sort((a, b) => new Date(b['Event Time']) - new Date(a['Event Time']));
+  const totalDepartures = dwellLog.filter(r => r['Event Type'] === 'Departure').length;
+  updateFilterCount('departedFilterCount', departures.length, totalDepartures);
 
   if (!departures.length) {
-    wrap.innerHTML = '<div class="empty-state">No departures logged in the last 7 days yet.</div>';
+    wrap.innerHTML = '<div class="empty-state">' +
+      (totalDepartures ? 'No departures match the current filters.' : 'No departures logged yet.') +
+      '</div>';
     return;
   }
 
@@ -535,6 +674,14 @@ function renderDepartedTable(dwellLog) {
 
   html += '</tbody></table>';
   wrap.innerHTML = html;
+}
+
+function updateFilterCount(elId, shown, total) {
+  let el = document.getElementById(elId);
+  if (!el) return;
+  el.textContent = (shown === total)
+    ? total + (total === 1 ? ' record' : ' records')
+    : 'Showing ' + shown + ' of ' + total + ' records';
 }
 
 function showError(msg) {
@@ -575,9 +722,9 @@ function todayStamp() {
 }
 
 document.getElementById('exportOnSiteBtn').addEventListener('click', () => {
-  if (!lastTrailers.length) return;
+  if (!lastFilteredOnSite.length) return;
 
-  const sorted = [...lastTrailers].sort((a, b) => {
+  const sorted = [...lastFilteredOnSite].sort((a, b) => {
     let av = a[sortState.key], bv = b[sortState.key];
     if (sortState.key === 'Hours On Site') { av = parseFloat(av) || 0; bv = parseFloat(bv) || 0; }
     if (av < bv) return sortState.dir === 'asc' ? -1 : 1;
@@ -593,6 +740,16 @@ document.getElementById('exportOnSiteBtn').addEventListener('click', () => {
 });
 
 document.getElementById('exportDwellLogBtn').addEventListener('click', () => {
+  if (!lastFilteredDeparted.length) return;
+
+  downloadCSV(
+    'pernod-dwell-log-filtered-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Event Type', 'Event Time', 'Duration (hrs)', 'Latitude', 'Longitude', 'Notes'],
+    lastFilteredDeparted
+  );
+});
+
+document.getElementById('exportDwellLogFullBtn').addEventListener('click', () => {
   if (!lastDwellLog.length) return;
 
   downloadCSV(
@@ -601,6 +758,34 @@ document.getElementById('exportDwellLogBtn').addEventListener('click', () => {
     lastDwellLog
   );
 });
+
+// ---- Filter wiring ----
+document.getElementById('onsiteSearch').addEventListener('input', () => renderOnSiteTable(lastTrailers));
+document.getElementById('onsiteMinHours').addEventListener('input', () => renderOnSiteTable(lastTrailers));
+document.getElementById('onsiteClearFilters').addEventListener('click', () => {
+  document.getElementById('onsiteSearch').value = '';
+  document.getElementById('onsiteMinHours').value = '';
+  renderOnSiteTable(lastTrailers);
+});
+
+document.getElementById('departedSearch').addEventListener('input', () => renderDepartedTable(lastDwellLog));
+document.getElementById('departedStart').addEventListener('change', () => renderDepartedTable(lastDwellLog));
+document.getElementById('departedEnd').addEventListener('change', () => renderDepartedTable(lastDwellLog));
+document.getElementById('departedMinHours').addEventListener('input', () => renderDepartedTable(lastDwellLog));
+document.getElementById('departedClearFilters').addEventListener('click', () => {
+  document.getElementById('departedSearch').value = '';
+  document.getElementById('departedMinHours').value = '';
+  setDefaultDateRange();
+  renderDepartedTable(lastDwellLog);
+});
+
+function setDefaultDateRange() {
+  const end = new Date();
+  const start = new Date(Date.now() - 7 * 24 * 3600000);
+  document.getElementById('departedEnd').value = end.toISOString().slice(0, 10);
+  document.getElementById('departedStart').value = start.toISOString().slice(0, 10);
+}
+setDefaultDateRange();
 
 async function loadData() {
   document.getElementById('lastUpdated').textContent = 'Refreshing...';
