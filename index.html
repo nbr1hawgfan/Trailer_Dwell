@@ -103,7 +103,6 @@
 
   #map {
     height: 460px;
-    margin: 8px 20px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: #2a2a2a;
@@ -331,8 +330,6 @@
 
 <div class="stats-bar" id="statsBar"></div>
 
-<div id="map"></div>
-
 <div class="refresh-row">
   <span class="last-updated" id="lastUpdated">Loading...</span>
   <button class="refresh-btn" id="refreshBtn">Refresh</button>
@@ -341,6 +338,7 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="onsite">On Site</button>
   <button class="tab-btn" data-tab="departed">Recently Departed</button>
+  <button class="tab-btn" data-tab="map">Map</button>
 </div>
 
 <div class="section" id="onsiteSection">
@@ -382,6 +380,10 @@
     <button class="refresh-btn" id="exportDwellLogFullBtn">Export Full History CSV</button>
   </div>
   <div id="departedTableWrap"></div>
+</div>
+
+<div class="section hidden" id="mapSection">
+  <div id="map"></div>
 </div>
 
 <div id="errorBanner" class="error-banner hidden"></div>
@@ -823,6 +825,23 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     const tab = btn.dataset.tab;
     document.getElementById('onsiteSection').classList.toggle('hidden', tab !== 'onsite');
     document.getElementById('departedSection').classList.toggle('hidden', tab !== 'departed');
+    document.getElementById('mapSection').classList.toggle('hidden', tab !== 'map');
+
+    if (tab === 'map' && map) {
+      // Leaflet sizes itself off its container at init time. Since the map
+      // tab starts hidden (display:none has zero size), the map renders
+      // broken/cut-off until told to recheck its size once it's actually
+      // visible on screen.
+      setTimeout(() => {
+        map.invalidateSize();
+        if (lastTrailers.length) {
+          const pts = lastTrailers
+            .map(t => [parseFloat(t['Latitude']), parseFloat(t['Longitude'])])
+            .filter(p => !isNaN(p[0]) && !isNaN(p[1]));
+          if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 17 });
+        }
+      }, 50);
+    }
   });
 });
 
