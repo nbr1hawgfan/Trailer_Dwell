@@ -3,7 +3,7 @@
   "short_name": "Pernod Dwell",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#121212",
-  "theme_color": "#121212",
+  "background_color": "#f4f5f6",
+  "theme_color": "#f4f5f6",
   "icons": []
 }

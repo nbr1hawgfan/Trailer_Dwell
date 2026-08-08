@@ -5,10 +5,24 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Pernod Ricard Trailer Dwell</title>
 <link rel="manifest" href="manifest.json">
-<meta name="theme-color" content="#121212">
+<meta name="theme-color" content="#f4f5f6">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
   :root {
+    --bg: #f4f5f6;
+    --bg-elevated: #ffffff;
+    --bg-card: #ffffff;
+    --border: #dde1e4;
+    --text: #1a1c1e;
+    --text-dim: #6b7278;
+    --accent: #2f7de1;
+    --good: #2e7d32;
+    --warn: #b8790f;
+    --bad: #c62828;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+
+  [data-theme="dark"] {
     --bg: #121212;
     --bg-elevated: #1c1c1c;
     --bg-card: #202020;
@@ -19,6 +33,7 @@
     --good: #4caf50;
     --warn: #d9a441;
     --bad: #d9534f;
+    --shadow: none;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -64,6 +79,7 @@
     padding: 14px 18px;
     flex: 1;
     min-width: 130px;
+    box-shadow: var(--shadow);
   }
 
   .stat-card .value {
@@ -83,11 +99,12 @@
   .stat-card.bad .value { color: var(--bad); }
 
   #map {
-    height: 320px;
+    height: 460px;
     margin: 8px 20px;
     border-radius: 10px;
     border: 1px solid var(--border);
     background: #2a2a2a;
+    box-shadow: var(--shadow);
   }
 
   .section {
@@ -130,6 +147,7 @@
     border: 1px solid var(--border);
     border-radius: 10px;
     overflow: hidden;
+    box-shadow: var(--shadow);
   }
 
   th {
@@ -200,6 +218,23 @@
 
   .refresh-btn:active { transform: scale(0.97); }
 
+  .theme-toggle {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
   .hidden { display: none; }
 
   .error-banner {
@@ -213,7 +248,7 @@
   }
 
   @media (max-width: 480px) {
-    #map { height: 240px; }
+    #map { height: 340px; }
     th, td { font-size: 12px; padding: 8px; }
   }
 </style>
@@ -221,8 +256,13 @@
 <body>
 
 <header>
-  <h1>Pernod Ricard Trailer Dwell</h1>
-  <div class="subtitle">7401 State Hwy 45, Fort Smith, AR</div>
+  <div class="header-row">
+    <div>
+      <h1>Pernod Ricard Trailer Dwell</h1>
+      <div class="subtitle">7401 State Hwy 45, Fort Smith, AR</div>
+    </div>
+    <button class="theme-toggle" id="themeToggle">Dark</button>
+  </div>
 </header>
 
 <div class="stats-bar" id="statsBar"></div>
@@ -528,6 +568,29 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 });
 
 document.getElementById('refreshBtn').addEventListener('click', loadData);
+
+// ---- Theme toggle (light by default, persisted per-device) ----
+const themeToggle = document.getElementById('themeToggle');
+
+function applyTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    themeToggle.textContent = 'Light';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    themeToggle.textContent = 'Dark';
+  }
+}
+
+const savedTheme = localStorage.getItem('pernodDwellTheme') || 'light';
+applyTheme(savedTheme);
+
+themeToggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('pernodDwellTheme', next);
+  applyTheme(next);
+});
 
 // ---- Init ----
 initMap();
