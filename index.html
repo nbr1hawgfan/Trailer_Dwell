@@ -338,6 +338,7 @@
 <div class="tabs">
   <button class="tab-btn active" data-tab="onsite">On Site</button>
   <button class="tab-btn" data-tab="departed">Recently Departed</button>
+  <button class="tab-btn" data-tab="visits">Visits</button>
   <button class="tab-btn" data-tab="map">Map</button>
 </div>
 
@@ -382,6 +383,31 @@
   <div id="departedTableWrap"></div>
 </div>
 
+<div class="section hidden" id="visitsSection">
+  <div class="filter-row">
+    <input type="text" id="visitsSearch" class="filter-input" placeholder="Search trailer name or ID...">
+    <div class="filter-field">
+      <label for="visitsStart">From</label>
+      <input type="date" id="visitsStart" class="filter-input-small">
+    </div>
+    <div class="filter-field">
+      <label for="visitsEnd">To</label>
+      <input type="date" id="visitsEnd" class="filter-input-small">
+    </div>
+    <div class="filter-field">
+      <label for="visitsMinHours">Min duration (hrs)</label>
+      <input type="number" id="visitsMinHours" class="filter-input-small" min="0" step="1" placeholder="0">
+    </div>
+    <button class="refresh-btn" id="visitsClearFilters">Clear</button>
+  </div>
+  <div class="filter-count" id="visitsFilterCount"></div>
+  <div class="export-row">
+    <button class="refresh-btn" id="exportVisitsBtn">Export Filtered CSV</button>
+    <button class="refresh-btn" id="exportVisitsFullBtn">Export Full History CSV</button>
+  </div>
+  <div id="visitsTableWrap"></div>
+</div>
+
 <div class="section hidden" id="mapSection">
   <div id="map"></div>
 </div>
@@ -397,6 +423,7 @@
 // ============================================================
 const CURRENT_STATUS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=450264095&single=true&output=csv';
 const DWELL_LOG_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=947795419&single=true&output=csv';
+const VISITS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=1735900058&single=true&output=csv';
 
 const SITE_CENTER = { lat: 35.3122, lng: -94.3843 }; // approx Pernod Ricard yard
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -553,6 +580,8 @@ let lastTrailers = [];
 let lastDwellLog = [];
 let lastFilteredOnSite = [];
 let lastFilteredDeparted = [];
+let lastVisits = [];
+let lastFilteredVisits = [];
 
 function applyOnSiteFilters(trailers) {
   const search = (document.getElementById('onsiteSearch').value || '').trim().toLowerCase();
@@ -681,6 +710,75 @@ function renderDepartedTable(dwellLog) {
   wrap.innerHTML = html;
 }
 
+function mapLink_(lat, lng) {
+  const la = parseFloat(lat), ln = parseFloat(lng);
+  if (isNaN(la) || isNaN(ln)) return '<span style="color:var(--text-dim);">—</span>';
+  return '<a href="https://www.google.com/maps?q=' + la + ',' + ln + '" target="_blank" rel="noopener" style="color:var(--accent);">Map</a>';
+}
+
+function applyVisitsFilters(visitRows) {
+  const search = (document.getElementById('visitsSearch').value || '').trim().toLowerCase();
+  const startVal = document.getElementById('visitsStart').value;
+  const endVal = document.getElementById('visitsEnd').value;
+  const minHours = parseFloat(document.getElementById('visitsMinHours').value);
+
+  const start = startVal ? new Date(startVal + 'T00:00:00') : null;
+  const end = endVal ? new Date(endVal + 'T23:59:59') : null;
+
+  return visitRows.filter(v => {
+    const arrival = new Date(v['Arrival Time']);
+    if (start && arrival < start) return false;
+    if (end && arrival > end) return false;
+
+    if (search) {
+      const haystack = ((v['Trailer Name'] || '') + ' ' + (v['Trailer ID'] || '')).toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+
+    if (!isNaN(minHours) && minHours > 0) {
+      const h = parseFloat(v['Duration (hrs)']) || 0;
+      if (h < minHours) return false;
+    }
+
+    return true;
+  }).sort((a, b) => new Date(b['Arrival Time']) - new Date(a['Arrival Time']));
+}
+
+function renderVisitsTable(visitRows) {
+  const wrap = document.getElementById('visitsTableWrap');
+  const filtered = applyVisitsFilters(visitRows);
+  lastFilteredVisits = filtered;
+
+  updateFilterCount('visitsFilterCount', filtered.length, visitRows.length);
+
+  if (!filtered.length) {
+    wrap.innerHTML = '<div class="empty-state">' +
+      (visitRows.length ? 'No visits match the current filters.' : 'No completed visits logged yet.') +
+      '</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr>' +
+    '<th>Trailer</th><th>Visit #</th><th>Arrived</th><th>Departed</th><th>Duration</th>' +
+    '<th>Arrival Pos.</th><th>Departure Pos.</th>' +
+    '</tr></thead><tbody>';
+
+  filtered.forEach(v => {
+    html += '<tr>' +
+      '<td>' + (v['Trailer Name'] || v['Trailer ID']) + '</td>' +
+      '<td>' + (v['Visit #'] || '') + '</td>' +
+      '<td>' + fmtDateTime(v['Arrival Time']) + '</td>' +
+      '<td>' + fmtDateTime(v['Departure Time (Confirmed On-Site)']) + '</td>' +
+      '<td><span class="dwell-badge ' + dwellClass(v['Duration (hrs)']) + '">' + hoursLabel(v['Duration (hrs)']) + '</span></td>' +
+      '<td>' + mapLink_(v['Arrival Latitude'], v['Arrival Longitude']) + '</td>' +
+      '<td>' + mapLink_(v['Departure Latitude'], v['Departure Longitude']) + '</td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
 function updateFilterCount(elId, shown, total) {
   let el = document.getElementById(elId);
   if (!el) return;
@@ -759,8 +857,28 @@ document.getElementById('exportDwellLogFullBtn').addEventListener('click', () =>
 
   downloadCSV(
     'pernod-dwell-log-full-' + todayStamp() + '.csv',
-    ['Trailer ID', 'Trailer Name', 'Event Type', 'Event Time', 'Duration (hrs)', 'Latitude', 'Longitude', 'Notes'],
+    ['Trailer ID', 'Trailer Name', 'Event Type', 'Event Time', 'Duration (hrs)', 'Latitude', 'Longitude', 'Notes', 'Last Confirmed On-Site'],
     lastDwellLog
+  );
+});
+
+document.getElementById('exportVisitsBtn').addEventListener('click', () => {
+  if (!lastFilteredVisits.length) return;
+
+  downloadCSV(
+    'pernod-visits-filtered-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Visit #', 'Arrival Time', 'Departure Time (Confirmed On-Site)', 'Departure Detected At', 'Duration (hrs)', 'Arrival Latitude', 'Arrival Longitude', 'Departure Latitude', 'Departure Longitude'],
+    lastFilteredVisits
+  );
+});
+
+document.getElementById('exportVisitsFullBtn').addEventListener('click', () => {
+  if (!lastVisits.length) return;
+
+  downloadCSV(
+    'pernod-visits-full-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Visit #', 'Arrival Time', 'Departure Time (Confirmed On-Site)', 'Departure Detected At', 'Duration (hrs)', 'Arrival Latitude', 'Arrival Longitude', 'Departure Latitude', 'Departure Longitude'],
+    lastVisits
   );
 });
 
@@ -784,6 +902,17 @@ document.getElementById('departedClearFilters').addEventListener('click', () => 
   renderDepartedTable(lastDwellLog);
 });
 
+document.getElementById('visitsSearch').addEventListener('input', () => renderVisitsTable(lastVisits));
+document.getElementById('visitsStart').addEventListener('change', () => renderVisitsTable(lastVisits));
+document.getElementById('visitsEnd').addEventListener('change', () => renderVisitsTable(lastVisits));
+document.getElementById('visitsMinHours').addEventListener('input', () => renderVisitsTable(lastVisits));
+document.getElementById('visitsClearFilters').addEventListener('click', () => {
+  document.getElementById('visitsSearch').value = '';
+  document.getElementById('visitsMinHours').value = '';
+  setDefaultVisitsDateRange();
+  renderVisitsTable(lastVisits);
+});
+
 function setDefaultDateRange() {
   const end = new Date();
   const start = new Date(Date.now() - 7 * 24 * 3600000);
@@ -792,27 +921,41 @@ function setDefaultDateRange() {
 }
 setDefaultDateRange();
 
+// Visits defaults to a 14-day window rather than 7 — disputes about a
+// trailer that "came back" often span longer than a week, so this tab
+// starts a bit wider than Recently Departed.
+function setDefaultVisitsDateRange() {
+  const end = new Date();
+  const start = new Date(Date.now() - 14 * 24 * 3600000);
+  document.getElementById('visitsEnd').value = end.toISOString().slice(0, 10);
+  document.getElementById('visitsStart').value = start.toISOString().slice(0, 10);
+}
+setDefaultVisitsDateRange();
+
 async function loadData() {
   document.getElementById('lastUpdated').textContent = 'Refreshing...';
 
   try {
-    const [trailers, dwellLog] = await Promise.all([
+    const [trailers, dwellLog, visitRows] = await Promise.all([
       fetchCSV(CURRENT_STATUS_CSV_URL),
-      fetchCSV(DWELL_LOG_CSV_URL)
+      fetchCSV(DWELL_LOG_CSV_URL),
+      fetchCSV(VISITS_CSV_URL)
     ]);
 
     clearError();
     lastTrailers = trailers;
     lastDwellLog = dwellLog;
+    lastVisits = visitRows;
     renderStats(trailers);
     updateMap(trailers);
     renderOnSiteTable(trailers);
     renderDepartedTable(dwellLog);
+    renderVisitsTable(visitRows);
 
     document.getElementById('lastUpdated').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   } catch (e) {
-    showError('Could not load data: ' + e.message + '. Check that both sheets are published to web as CSV and the URLs in the code are correct.');
+    showError('Could not load data: ' + e.message + '. Check that all three sheets are published to web as CSV and the URLs in the code are correct.');
     document.getElementById('lastUpdated').textContent = 'Update failed';
   }
 }
@@ -825,6 +968,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     const tab = btn.dataset.tab;
     document.getElementById('onsiteSection').classList.toggle('hidden', tab !== 'onsite');
     document.getElementById('departedSection').classList.toggle('hidden', tab !== 'departed');
+    document.getElementById('visitsSection').classList.toggle('hidden', tab !== 'visits');
     document.getElementById('mapSection').classList.toggle('hidden', tab !== 'map');
 
     if (tab === 'map' && map) {
