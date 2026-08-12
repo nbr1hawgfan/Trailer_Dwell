@@ -225,6 +225,7 @@
   .dwell-good { background: var(--good-bg); color: var(--good); border-left-color: var(--good); }
   .dwell-warn { background: var(--warn-bg); color: var(--warn); border-left-color: var(--warn); }
   .dwell-bad { background: var(--bad-bg); color: var(--bad); border-left-color: var(--bad); }
+  .dwell-neutral { background: var(--bg); color: var(--text-dim); border-left-color: var(--border); }
 
   .empty-state {
     text-align: center;
@@ -400,6 +401,7 @@
   <button class="tab-btn active" data-tab="onsite">On Site</button>
   <button class="tab-btn" data-tab="departed">Recently Departed</button>
   <button class="tab-btn" data-tab="visits">Visits</button>
+  <button class="tab-btn" data-tab="locations">Locations</button>
   <button class="tab-btn" data-tab="analytics">Analytics</button>
   <button class="tab-btn" data-tab="map">Map</button>
 </div>
@@ -470,6 +472,28 @@
   <div id="visitsTableWrap"></div>
 </div>
 
+<div class="section hidden" id="locationsSection">
+  <div class="filter-row">
+    <input type="text" id="locationsSearch" class="filter-input" placeholder="Search trailer name or ID...">
+    <div class="filter-field">
+      <label for="locationsStatusFilter">Status</label>
+      <select id="locationsStatusFilter" class="filter-input-small">
+        <option value="">All</option>
+        <option value="At Pernod Ricard">At Pernod Ricard</option>
+        <option value="At Warehouse">At a Warehouse</option>
+        <option value="Elsewhere - Unaccounted">Elsewhere — Unaccounted</option>
+        <option value="No Recent GPS">No Recent GPS</option>
+      </select>
+    </div>
+    <button class="refresh-btn" id="locationsClearFilters">Clear</button>
+  </div>
+  <div class="filter-count" id="locationsFilterCount"></div>
+  <div class="export-row">
+    <button class="refresh-btn" id="exportLocationsBtn">Export CSV</button>
+  </div>
+  <div id="locationsTableWrap"></div>
+</div>
+
 <div class="section hidden" id="analyticsSection">
   <div class="filter-row">
     <div class="filter-field">
@@ -517,6 +541,20 @@
 const CURRENT_STATUS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=450264095&single=true&output=csv';
 const DWELL_LOG_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=947795419&single=true&output=csv';
 const VISITS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=1735900058&single=true&output=csv';
+const LOCATIONS_CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTmxbZXyc8eN8KxGAA-eLkghoFHpPkeFdrUFCm9xrlaJtfmaJM-HBPA8cjRvQ5Kh9ySdiw3Wm9OSYpT/pub?gid=1680316946&single=true&output=csv';
+
+// Trailers hidden everywhere in this app — currently under a separate paid
+// storage arrangement, per management. Remove an id here (and from
+// PAID_STORAGE_TRAILER_IDS in the backend's Config.gs) when a trailer goes
+// back to being a regular transfer trailer. Matches the backend list.
+const HIDDEN_TRAILER_IDS = [
+  '212014918337226', // 562164-W
+  '212014918337328'  // 016-W
+];
+
+function isHiddenTrailer(id) {
+  return HIDDEN_TRAILER_IDS.includes(String(id));
+}
 
 const SITE_CENTER = { lat: 35.3122, lng: -94.3843 }; // approx Pernod Ricard yard
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -677,6 +715,8 @@ let lastVisits = [];
 let lastFilteredVisits = [];
 let lastLongestVisits = [];
 let lastTrailerSummary = [];
+let lastLocations = [];
+let lastFilteredLocations = [];
 
 function applyOnSiteFilters(trailers) {
   const search = (document.getElementById('onsiteSearch').value || '').trim().toLowerCase();
@@ -1028,6 +1068,97 @@ function setDefaultVisitsDateRange() {
 setDefaultVisitsDateRange();
 
 // ============================================================
+// Locations
+// ============================================================
+
+function hoursSince_(dateStr, now) {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return NaN;
+  return (now - d) / 3600000;
+}
+
+function locationBadgeClass_(status, hoursSinceStatus) {
+  if (status === 'Elsewhere - Unaccounted' || status === 'No Recent GPS') {
+    if (hoursSinceStatus >= BAD_HOURS) return 'dwell-bad';
+    if (hoursSinceStatus >= WARN_HOURS) return 'dwell-warn';
+    return 'dwell-neutral';
+  }
+  return 'dwell-neutral'; // At Pernod Ricard / At a warehouse — informational, not a red flag
+}
+
+function applyLocationsFilters(locations) {
+  const search = (document.getElementById('locationsSearch').value || '').trim().toLowerCase();
+  const statusFilter = document.getElementById('locationsStatusFilter').value;
+
+  return locations.filter(l => {
+    if (search) {
+      const haystack = ((l['Trailer Name'] || '') + ' ' + (l['Trailer ID'] || '')).toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    if (statusFilter === 'At Warehouse') {
+      if (!(l['Current Status'] || '').startsWith('At ') || l['Current Status'] === 'At Pernod Ricard') return false;
+    } else if (statusFilter && l['Current Status'] !== statusFilter) {
+      return false;
+    }
+    return true;
+  }).sort((a, b) => new Date(b['Status Since']) - new Date(a['Status Since']));
+}
+
+function renderLocationsTable(locations) {
+  const wrap = document.getElementById('locationsTableWrap');
+  if (!wrap) return; // guard in case loadData fires before DOM is ready
+
+  const filtered = applyLocationsFilters(locations);
+  lastFilteredLocations = filtered;
+  updateFilterCount('locationsFilterCount', filtered.length, locations.length);
+
+  if (!filtered.length) {
+    wrap.innerHTML = '<div class="empty-state">' +
+      (locations.length ? 'No trailers match the current filters.' : 'No location data yet — this fills in automatically once trailers with Pernod history get polled again.') +
+      '</div>';
+    return;
+  }
+
+  const now = new Date();
+
+  let html = '<table><thead><tr>' +
+    '<th>Trailer</th><th>Current Status</th><th>Since</th><th>Last Ping</th><th>Position</th>' +
+    '</tr></thead><tbody>';
+
+  filtered.forEach(l => {
+    const hrs = hoursSince_(l['Status Since'], now);
+    const badgeClass = locationBadgeClass_(l['Current Status'], hrs);
+    html += '<tr>' +
+      '<td>' + (l['Trailer Name'] || l['Trailer ID']) + '</td>' +
+      '<td>' + l['Current Status'] + '</td>' +
+      '<td><span class="dwell-badge ' + badgeClass + '">' + (isNaN(hrs) ? '—' : hoursLabel(hrs)) + '</span></td>' +
+      '<td>' + fmtDateTime(l['Last Ping Time']) + '</td>' +
+      '<td>' + mapLink_(l['Last Known Latitude'], l['Last Known Longitude']) + '</td>' +
+      '</tr>';
+  });
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+document.getElementById('locationsSearch').addEventListener('input', () => renderLocationsTable(lastLocations));
+document.getElementById('locationsStatusFilter').addEventListener('change', () => renderLocationsTable(lastLocations));
+document.getElementById('locationsClearFilters').addEventListener('click', () => {
+  document.getElementById('locationsSearch').value = '';
+  document.getElementById('locationsStatusFilter').value = '';
+  renderLocationsTable(lastLocations);
+});
+
+document.getElementById('exportLocationsBtn').addEventListener('click', () => {
+  if (!lastFilteredLocations.length) return;
+  downloadCSV(
+    'pernod-trailer-locations-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Current Status', 'Status Since', 'Last Known Latitude', 'Last Known Longitude', 'Last Ping Time'],
+    lastFilteredLocations
+  );
+});
+
+// ============================================================
 // Analytics
 // ============================================================
 
@@ -1255,22 +1386,37 @@ async function loadData() {
   document.getElementById('lastUpdated').textContent = 'Refreshing...';
 
   try {
-    const [trailers, dwellLog, visitRows] = await Promise.all([
+    const fetches = [
       fetchCSV(CURRENT_STATUS_CSV_URL),
       fetchCSV(DWELL_LOG_CSV_URL),
       fetchCSV(VISITS_CSV_URL)
-    ]);
+    ];
+    if (LOCATIONS_CSV_URL && !LOCATIONS_CSV_URL.startsWith('PASTE_')) {
+      fetches.push(fetchCSV(LOCATIONS_CSV_URL));
+    }
+
+    const [trailersRaw, dwellLogRaw, visitRowsRaw, locationsRaw] = await Promise.all(fetches);
+
+    // Hidden trailers (paid storage, etc.) are filtered out right here —
+    // a single choke point so every tab, chart, and export downstream
+    // never sees them, regardless of what's still in the underlying sheets.
+    const trailers = trailersRaw.filter(r => !isHiddenTrailer(r['Trailer ID']));
+    const dwellLog = dwellLogRaw.filter(r => !isHiddenTrailer(r['Trailer ID']));
+    const visitRows = visitRowsRaw.filter(r => !isHiddenTrailer(r['Trailer ID']));
+    const locations = (locationsRaw || []).filter(r => !isHiddenTrailer(r['Trailer ID']));
 
     clearError();
     lastTrailers = trailers;
     lastDwellLog = dwellLog;
     lastVisits = visitRows;
+    lastLocations = locations;
     renderStats(trailers);
     updateMap(trailers);
     renderOnSiteTable(trailers);
     renderDepartedTable(dwellLog);
     renderVisitsTable(visitRows);
     renderAnalytics();
+    renderLocationsTable(locations);
 
     document.getElementById('lastUpdated').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -1289,6 +1435,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.getElementById('onsiteSection').classList.toggle('hidden', tab !== 'onsite');
     document.getElementById('departedSection').classList.toggle('hidden', tab !== 'departed');
     document.getElementById('visitsSection').classList.toggle('hidden', tab !== 'visits');
+    document.getElementById('locationsSection').classList.toggle('hidden', tab !== 'locations');
     document.getElementById('analyticsSection').classList.toggle('hidden', tab !== 'analytics');
     document.getElementById('mapSection').classList.toggle('hidden', tab !== 'map');
 
