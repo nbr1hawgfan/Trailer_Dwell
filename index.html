@@ -142,6 +142,7 @@
     font-size: 15px;
     font-weight: 600;
     margin-bottom: 10px;
+    margin-top: 4px;
     color: var(--text);
   }
 
@@ -399,6 +400,7 @@
   <button class="tab-btn active" data-tab="onsite">On Site</button>
   <button class="tab-btn" data-tab="departed">Recently Departed</button>
   <button class="tab-btn" data-tab="visits">Visits</button>
+  <button class="tab-btn" data-tab="analytics">Analytics</button>
   <button class="tab-btn" data-tab="map">Map</button>
 </div>
 
@@ -466,6 +468,37 @@
     <button class="refresh-btn" id="exportVisitsFullBtn">Export Full History CSV</button>
   </div>
   <div id="visitsTableWrap"></div>
+</div>
+
+<div class="section hidden" id="analyticsSection">
+  <div class="filter-row">
+    <div class="filter-field">
+      <label for="analyticsMonth">Month</label>
+      <input type="month" id="analyticsMonth" class="filter-input-small">
+    </div>
+    <div class="filter-field">
+      <label for="analyticsThreshold">Flag over (hrs)</label>
+      <input type="number" id="analyticsThreshold" class="filter-input-small" min="1" step="1" value="48">
+    </div>
+    <button class="refresh-btn" id="analyticsAllTime">All-Time View</button>
+  </div>
+
+  <div class="stats-bar" id="analyticsStatsBar" style="margin:0 0 16px 0;"></div>
+
+  <h2>Average Dwell Time — Last 6 Months</h2>
+  <div id="analyticsTrendChart" style="margin-bottom:20px;"></div>
+
+  <h2>Longest Visits <span id="analyticsScopeLabel1" style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:normal;"></span></h2>
+  <div class="export-row">
+    <button class="refresh-btn" id="exportLongestBtn">Export CSV</button>
+  </div>
+  <div id="longestVisitsWrap" style="margin-bottom:20px;"></div>
+
+  <h2>Per-Trailer Summary <span id="analyticsScopeLabel2" style="color:var(--text-dim);font-weight:400;text-transform:none;letter-spacing:normal;"></span></h2>
+  <div class="export-row">
+    <button class="refresh-btn" id="exportTrailerSummaryBtn">Export CSV</button>
+  </div>
+  <div id="trailerSummaryWrap"></div>
 </div>
 
 <div class="section hidden" id="mapSection">
@@ -642,6 +675,8 @@ let lastFilteredOnSite = [];
 let lastFilteredDeparted = [];
 let lastVisits = [];
 let lastFilteredVisits = [];
+let lastLongestVisits = [];
+let lastTrailerSummary = [];
 
 function applyOnSiteFilters(trailers) {
   const search = (document.getElementById('onsiteSearch').value || '').trim().toLowerCase();
@@ -992,6 +1027,230 @@ function setDefaultVisitsDateRange() {
 }
 setDefaultVisitsDateRange();
 
+// ============================================================
+// Analytics
+// ============================================================
+
+function monthKey_(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+function monthLabel_(key) {
+  const [y, m] = key.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+function last6MonthKeys_() {
+  const keys = [];
+  const now = new Date();
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    keys.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+  return keys;
+}
+
+function renderTrendChart(visits) {
+  const wrap = document.getElementById('analyticsTrendChart');
+  const keys = last6MonthKeys_();
+
+  const monthlyAvg = keys.map(key => {
+    const inMonth = visits.filter(v => monthKey_(v['Arrival Time']) === key);
+    const hours = inMonth.map(v => parseFloat(v['Duration (hrs)'])).filter(n => !isNaN(n));
+    const avg = hours.length ? hours.reduce((a, b) => a + b, 0) / hours.length : 0;
+    return { key, avg, count: inMonth.length };
+  });
+
+  const maxAvg = Math.max(...monthlyAvg.map(m => m.avg), 1);
+  const barW = 100 / keys.length;
+
+  let bars = '';
+  monthlyAvg.forEach((m, i) => {
+    const heightPct = m.avg > 0 ? Math.max((m.avg / maxAvg) * 100, 3) : 0;
+    const x = i * barW;
+    const barColor = m.avg >= 48 ? 'var(--bad)' : m.avg >= 24 ? 'var(--warn)' : 'var(--accent)';
+    bars += `
+      <div style="position:absolute; left:${x}%; bottom:0; width:${barW}%; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; padding:0 6px;">
+        <div style="font-family:var(--mono); font-size:11px; font-weight:600; color:var(--text); margin-bottom:4px;">${m.avg > 0 ? hoursLabel(m.avg) : '—'}</div>
+        <div style="width:100%; max-width:48px; height:${heightPct}%; background:${barColor}; border-radius:2px 2px 0 0; min-height:${m.avg > 0 ? '2px' : '0'};"></div>
+        <div style="font-size:10px; color:var(--text-dim); margin-top:6px; text-transform:uppercase; letter-spacing:0.03em;">${monthLabel_(m.key)}</div>
+        <div style="font-family:var(--mono); font-size:9px; color:var(--text-dim);">${m.count} visit${m.count === 1 ? '' : 's'}</div>
+      </div>`;
+  });
+
+  wrap.innerHTML = `
+    <div style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 12px 12px 12px;">
+      <div style="position:relative; height:160px;">${bars}</div>
+    </div>`;
+}
+
+function getAnalyticsScope() {
+  const monthVal = document.getElementById('analyticsMonth').value;
+  const allTime = document.getElementById('analyticsMonth').dataset.allTime === 'true';
+  if (allTime || !monthVal) return { visits: lastVisits, label: allTime ? '(All-Time)' : '' };
+  return {
+    visits: lastVisits.filter(v => monthKey_(v['Arrival Time']) === monthVal),
+    label: '(' + monthLabel_(monthVal) + ')'
+  };
+}
+
+function renderAnalyticsStats(visits, threshold) {
+  const bar = document.getElementById('analyticsStatsBar');
+  const uniqueTrailers = new Set(visits.map(v => v['Trailer ID'])).size;
+  const totalVisits = visits.length;
+  const hours = visits.map(v => parseFloat(v['Duration (hrs)'])).filter(n => !isNaN(n));
+  const totalHours = hours.reduce((a, b) => a + b, 0);
+  const trailerDays = totalHours / 24;
+  const avgHours = hours.length ? totalHours / hours.length : 0;
+  const overThreshold = hours.filter(h => h >= threshold).length;
+  const overPct = totalVisits ? Math.round((overThreshold / totalVisits) * 100) : 0;
+
+  bar.innerHTML = `
+    <div class="stat-card">
+      <div class="value">${uniqueTrailers}</div>
+      <div class="label">Unique Trailers</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">${totalVisits}</div>
+      <div class="label">Total Visits</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">${trailerDays.toFixed(1)}</div>
+      <div class="label">Trailer-Days Tied Up</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">${hoursLabel(avgHours)}</div>
+      <div class="label">Avg Dwell / Visit</div>
+    </div>
+    <div class="stat-card ${overPct > 25 ? 'bad' : overPct > 0 ? 'warn' : ''}">
+      <div class="value">${overPct}%</div>
+      <div class="label">Over ${threshold}h (${overThreshold})</div>
+    </div>
+  `;
+}
+
+function renderLongestVisits(visits) {
+  const wrap = document.getElementById('longestVisitsWrap');
+  const sorted = [...visits]
+    .filter(v => !isNaN(parseFloat(v['Duration (hrs)'])))
+    .sort((a, b) => parseFloat(b['Duration (hrs)']) - parseFloat(a['Duration (hrs)']))
+    .slice(0, 10);
+
+  lastLongestVisits = sorted;
+
+  if (!sorted.length) {
+    wrap.innerHTML = '<div class="empty-state">No visits in this scope yet.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr><th>Trailer</th><th>Arrived</th><th>Departed</th><th>Duration</th></tr></thead><tbody>';
+  sorted.forEach(v => {
+    html += '<tr>' +
+      '<td>' + (v['Trailer Name'] || v['Trailer ID']) + '</td>' +
+      '<td>' + fmtDateTime(v['Arrival Time']) + '</td>' +
+      '<td>' + fmtDateTime(v['Departure Time (Confirmed On-Site)']) + '</td>' +
+      '<td><span class="dwell-badge ' + dwellClass(v['Duration (hrs)']) + '">' + hoursLabel(v['Duration (hrs)']) + '</span></td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+function renderTrailerSummary(visits) {
+  const wrap = document.getElementById('trailerSummaryWrap');
+  const byTrailer = {};
+
+  visits.forEach(v => {
+    const id = v['Trailer ID'];
+    const dur = parseFloat(v['Duration (hrs)']);
+    if (!byTrailer[id]) byTrailer[id] = { id, name: v['Trailer Name'] || id, visits: 0, totalHours: 0 };
+    byTrailer[id].visits++;
+    if (!isNaN(dur)) byTrailer[id].totalHours += dur;
+  });
+
+  const rows = Object.values(byTrailer)
+    .map(t => ({ ...t, avgHours: t.totalHours / t.visits }))
+    .sort((a, b) => b.totalHours - a.totalHours);
+
+  lastTrailerSummary = rows;
+
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="empty-state">No visits in this scope yet.</div>';
+    return;
+  }
+
+  let html = '<table><thead><tr><th>Trailer</th><th>Visits</th><th>Total Hours</th><th>Avg / Visit</th></tr></thead><tbody>';
+  rows.forEach(t => {
+    html += '<tr>' +
+      '<td>' + t.name + '</td>' +
+      '<td style="font-family:var(--mono);">' + t.visits + '</td>' +
+      '<td style="font-family:var(--mono);">' + hoursLabel(t.totalHours) + '</td>' +
+      '<td><span class="dwell-badge ' + dwellClass(t.avgHours) + '">' + hoursLabel(t.avgHours) + '</span></td>' +
+      '</tr>';
+  });
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+}
+
+function renderAnalytics() {
+  const threshold = parseFloat(document.getElementById('analyticsThreshold').value) || 48;
+  const scope = getAnalyticsScope();
+
+  document.getElementById('analyticsScopeLabel1').textContent = scope.label;
+  document.getElementById('analyticsScopeLabel2').textContent = scope.label;
+
+  renderAnalyticsStats(scope.visits, threshold);
+  renderTrendChart(lastVisits); // trend always shows full 6-month history regardless of scope
+  renderLongestVisits(scope.visits);
+  renderTrailerSummary(scope.visits);
+}
+
+function setDefaultAnalyticsMonth() {
+  const now = new Date();
+  document.getElementById('analyticsMonth').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+}
+setDefaultAnalyticsMonth();
+
+document.getElementById('analyticsMonth').addEventListener('change', () => {
+  document.getElementById('analyticsMonth').dataset.allTime = 'false';
+  renderAnalytics();
+});
+document.getElementById('analyticsThreshold').addEventListener('input', renderAnalytics);
+document.getElementById('analyticsAllTime').addEventListener('click', () => {
+  const el = document.getElementById('analyticsMonth');
+  const isAllTime = el.dataset.allTime === 'true';
+  el.dataset.allTime = isAllTime ? 'false' : 'true';
+  document.getElementById('analyticsAllTime').textContent = isAllTime ? 'All-Time View' : 'Back to Month View';
+  renderAnalytics();
+});
+
+document.getElementById('exportLongestBtn').addEventListener('click', () => {
+  if (!lastLongestVisits.length) return;
+  downloadCSV(
+    'pernod-longest-visits-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Visit #', 'Arrival Time', 'Departure Time (Confirmed On-Site)', 'Duration (hrs)'],
+    lastLongestVisits
+  );
+});
+
+document.getElementById('exportTrailerSummaryBtn').addEventListener('click', () => {
+  if (!lastTrailerSummary.length) return;
+  const rows = lastTrailerSummary.map(t => ({
+    'Trailer ID': t.id,
+    'Trailer Name': t.name,
+    'Visits': t.visits,
+    'Total Hours': Math.round(t.totalHours * 100) / 100,
+    'Avg Hours Per Visit': Math.round(t.avgHours * 100) / 100
+  }));
+  downloadCSV(
+    'pernod-trailer-summary-' + todayStamp() + '.csv',
+    ['Trailer ID', 'Trailer Name', 'Visits', 'Total Hours', 'Avg Hours Per Visit'],
+    rows
+  );
+});
+
 async function loadData() {
   document.getElementById('lastUpdated').textContent = 'Refreshing...';
 
@@ -1011,6 +1270,7 @@ async function loadData() {
     renderOnSiteTable(trailers);
     renderDepartedTable(dwellLog);
     renderVisitsTable(visitRows);
+    renderAnalytics();
 
     document.getElementById('lastUpdated').textContent =
       'Updated ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
@@ -1029,6 +1289,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.getElementById('onsiteSection').classList.toggle('hidden', tab !== 'onsite');
     document.getElementById('departedSection').classList.toggle('hidden', tab !== 'departed');
     document.getElementById('visitsSection').classList.toggle('hidden', tab !== 'visits');
+    document.getElementById('analyticsSection').classList.toggle('hidden', tab !== 'analytics');
     document.getElementById('mapSection').classList.toggle('hidden', tab !== 'map');
 
     if (tab === 'map' && map) {
