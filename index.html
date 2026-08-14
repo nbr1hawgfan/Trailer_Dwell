@@ -227,6 +227,32 @@
   .dwell-bad { background: var(--bad-bg); color: var(--bad); border-left-color: var(--bad); }
   .dwell-neutral { background: var(--bg); color: var(--text-dim); border-left-color: var(--border); }
 
+  .source-tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: var(--bg);
+    color: var(--text-dim);
+    border: 1px solid var(--border);
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  .load-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 2px;
+  }
+
+  .load-tag.empty { background: rgba(31,78,140,0.1); color: var(--accent); }
+  .load-tag.loaded { background: var(--good-bg); color: var(--good); }
+
   .empty-state {
     text-align: center;
     padding: 40px 20px;
@@ -759,13 +785,15 @@ function renderOnSiteTable(trailers) {
 
   let html = '<table><thead><tr>' +
     '<th data-key="Trailer Name">Trailer</th>' +
+    '<th>Load</th>' +
     '<th data-key="Arrival Time">Arrived</th>' +
     '<th data-key="Hours On Site">Dwell Time</th>' +
     '</tr></thead><tbody>';
 
   sorted.forEach(t => {
     html += '<tr>' +
-      '<td>' + (t['Trailer Name'] || t['Trailer ID']) + '</td>' +
+      '<td>' + (t['Trailer Name'] || t['Trailer ID']) + sourceBadge_(t) + '</td>' +
+      '<td>' + loadStatusBadge_(t) + '</td>' +
       '<td>' + fmtDateTime(t['Arrival Time']) + '</td>' +
       '<td><span class="dwell-badge ' + dwellClass(t['Hours On Site']) + '">' + hoursLabel(t['Hours On Site']) + '</span></td>' +
       '</tr>';
@@ -835,7 +863,7 @@ function renderDepartedTable(dwellLog) {
 
   departures.forEach(d => {
     html += '<tr>' +
-      '<td>' + (d['Trailer Name'] || d['Trailer ID']) + '</td>' +
+      '<td>' + (d['Trailer Name'] || d['Trailer ID']) + sourceBadge_(d) + '</td>' +
       '<td>' + fmtDateTime(d['Event Time']) + '</td>' +
       '<td><span class="dwell-badge ' + dwellClass(d['Duration (hrs)']) + '">' + hoursLabel(d['Duration (hrs)']) + '</span></td>' +
       '</tr>';
@@ -849,6 +877,21 @@ function mapLink_(lat, lng) {
   const la = parseFloat(lat), ln = parseFloat(lng);
   if (isNaN(la) || isNaN(ln)) return '<span style="color:var(--text-dim);">—</span>';
   return '<a href="https://www.google.com/maps?q=' + la + ',' + ln + '" target="_blank" rel="noopener" style="color:var(--accent);">Map</a>';
+}
+
+// Small "MANUAL" tag shown next to a trailer name when it came from a
+// yard-check submission rather than Samsara GPS.
+function sourceBadge_(row) {
+  return row['Tracking Method'] === 'Manual' ? ' <span class="source-tag">MANUAL</span>' : '';
+}
+
+// Empty/Loaded tag — only populated for manually-tracked trailers, since
+// that's data only a human walking the yard can provide.
+function loadStatusBadge_(row) {
+  const status = row['Load Status'];
+  if (!status) return '<span style="color:var(--text-dim);">—</span>';
+  const cls = status.toLowerCase() === 'loaded' ? 'load-tag loaded' : 'load-tag empty';
+  return '<span class="' + cls + '">' + status + '</span>';
 }
 
 function applyVisitsFilters(visitRows) {
@@ -900,7 +943,7 @@ function renderVisitsTable(visitRows) {
 
   filtered.forEach(v => {
     html += '<tr>' +
-      '<td>' + (v['Trailer Name'] || v['Trailer ID']) + '</td>' +
+      '<td>' + (v['Trailer Name'] || v['Trailer ID']) + sourceBadge_(v) + '</td>' +
       '<td>' + (v['Visit #'] || '') + '</td>' +
       '<td>' + fmtDateTime(v['Arrival Time']) + '</td>' +
       '<td>' + fmtDateTime(v['Departure Time (Confirmed On-Site)']) + '</td>' +
